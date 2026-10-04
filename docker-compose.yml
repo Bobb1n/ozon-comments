@@ -3,9 +3,9 @@ services:
     image: postgres:17-alpine
     profiles: [test]
     environment:
-      POSTGRES_USER: ${TEST_POSTGRES_USER:?Set TEST_POSTGRES_USER in .env}
-      POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD:?Set TEST_POSTGRES_PASSWORD in .env}
-      POSTGRES_DB: ${TEST_POSTGRES_DB:?Set TEST_POSTGRES_DB in .env}
+      POSTGRES_USER: ${TEST_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${TEST_POSTGRES_DB}
     ports:
       - "127.0.0.1:${TEST_POSTGRES_PORT:-55432}:5432"
     healthcheck:
@@ -23,7 +23,7 @@ services:
     environment:
       STORAGE: postgres
       METRICS_ENABLED: ${METRICS_ENABLED:-false}
-      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-ozon}:${POSTGRES_PASSWORD:-ozon}@db:5432/${POSTGRES_DB:-ozon}?sslmode=disable}
+      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -34,7 +34,7 @@ services:
         required: false
     entrypoint: ["migrate"]
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-ozon}:${POSTGRES_PASSWORD:-ozon}@db:5432/${POSTGRES_DB:-ozon}?sslmode=disable}
+      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable}
     depends_on:
       db:
         condition: service_healthy
@@ -43,9 +43,9 @@ services:
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-ozon}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ozon}
-      POSTGRES_DB: ${POSTGRES_DB:-ozon}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
