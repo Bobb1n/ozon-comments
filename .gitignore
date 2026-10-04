@@ -1,0 +1,6 @@
+/bin/
+.env
+coverage.out
+/mocks/
+/.idea/
+.DS_Store

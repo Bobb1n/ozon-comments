@@ -1,0 +1,91 @@
+services:
+  test-db:
+    image: postgres:17-alpine
+    profiles: [test]
+    environment:
+      POSTGRES_USER: ${TEST_POSTGRES_USER:?Set TEST_POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD:?Set TEST_POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${TEST_POSTGRES_DB:?Set TEST_POSTGRES_DB in .env}
+    ports:
+      - "127.0.0.1:${TEST_POSTGRES_PORT:-55432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+  app:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "${APP_PORT:-8080}:${APP_CONTAINER_PORT:-8080}"
+    environment:
+      STORAGE: postgres
+      METRICS_ENABLED: ${METRICS_ENABLED:-false}
+      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-ozon}:${POSTGRES_PASSWORD:-ozon}@db:5432/${POSTGRES_DB:-ozon}?sslmode=disable}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+  migrate:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    entrypoint: ["migrate"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-ozon}:${POSTGRES_PASSWORD:-ozon}@db:5432/${POSTGRES_DB:-ozon}?sslmode=disable}
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    image: postgres:17-alpine
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ozon}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ozon}
+      POSTGRES_DB: ${POSTGRES_DB:-ozon}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    profiles: [monitoring]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-7d}
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - app
+  grafana:
+    image: grafana/grafana:13.2.3
+    profiles: [monitoring]
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - 'test -n "$$GF_SECURITY_ADMIN_PASSWORD" || { echo "Set GRAFANA_ADMIN_PASSWORD in .env" >&2; exit 1; }; exec /run.sh'
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+volumes:
+  postgres_data:
+  prometheus_data:
+  grafana_data:

@@ -1,0 +1,33 @@
+all: false
+log-level: warn
+dir: mocks
+filename: '{{.InterfaceName | snakecase}}.go'
+pkgname: mocks
+structname: '{{.InterfaceName}}'
+template: testify
+packages:
+  ozon/internal/service:
+    interfaces:
+      PostRepository:
+      CommentRepository:
+      CommentPublisher:
+      UserRepository:
+      RefreshRepository:
+  ozon/internal/transport/graphql:
+    interfaces:
+      PostUseCases:
+      CommentUseCases:
+      CommentSubscriber:
+      GraphQLMetrics:
+  ozon/internal/transport/middleware:
+    interfaces:
+      TokenVerifier:
+      HTTPMetrics:
+  ozon/internal/transport/http:
+    interfaces:
+      LoginService:
+      RegistrationService:
+      SessionService:
+  github.com/jackc/pgx/v5:
+    interfaces:
+      Row:

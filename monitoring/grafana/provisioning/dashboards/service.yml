@@ -1,0 +1,9 @@
+apiVersion: 1
+providers:
+  - name: ozon
+    folder: Сервис
+    type: file
+    allowUiUpdates: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards

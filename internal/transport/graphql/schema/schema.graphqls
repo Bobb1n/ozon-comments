@@ -1,0 +1,59 @@
+scalar Time
+
+type Post {
+  id: ID!
+  authorId: ID!
+  title: String!
+  content: String!
+  commentsEnabled: Boolean!
+  createdAt: Time!
+}
+
+type Comment {
+  id: ID!
+  postId: ID!
+  parentId: ID
+  authorId: ID!
+  text: String!
+  createdAt: Time!
+}
+
+type PostPage {
+  items: [Post!]!
+  endCursor: String
+  hasNextPage: Boolean!
+}
+
+type CommentPage {
+  items: [Comment!]!
+  endCursor: String
+  hasNextPage: Boolean!
+}
+
+input CreatePostInput {
+  title: String!
+  content: String!
+}
+
+input CreateCommentInput {
+  postId: ID!
+  parentId: ID
+  text: String!
+}
+
+type Query {
+  posts(first: Int! = 20, after: String): PostPage!
+  post(id: ID!): Post
+  "Без parentId возвращает корневые комментарии; с parentId — непосредственные ответы."
+  comments(postId: ID!, parentId: ID, first: Int! = 20, after: String): CommentPage!
+}
+
+type Mutation {
+  createPost(input: CreatePostInput!): Post!
+  setCommentsEnabled(postId: ID!, enabled: Boolean!): Post!
+  createComment(input: CreateCommentInput!): Comment!
+}
+
+type Subscription {
+  commentAdded(postId: ID!): Comment!
+}

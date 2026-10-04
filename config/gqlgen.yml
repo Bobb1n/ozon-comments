@@ -1,0 +1,18 @@
+schema:
+  - internal/transport/graphql/schema/schema.graphqls
+exec:
+  filename: internal/transport/graphql/generated/generated.go
+  package: generated
+model:
+  filename: internal/transport/graphql/model/models_gen.go
+  package: model
+models:
+  Post:
+    model: ozon/internal/domain.Post
+  Comment:
+    model: ozon/internal/domain.Comment
+    fields:
+      parentId:
+        resolver: true
+  Time:
+    model: github.com/99designs/gqlgen/graphql.Time
