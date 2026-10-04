@@ -55,7 +55,7 @@ type HTTPConfig struct {
 type DatabaseConfig struct {
 	URL            string        `env:"DATABASE_URL"`
 	Host           string        `env:"POSTGRES_HOST" envDefault:"127.0.0.1"`
-	Port           int           `env:"POSTGRES_PORT" envDefault:"5432"`
+	Port           int           `env:"POSTGRES_PORT" envDefault:"5433"`
 	User           string        `env:"POSTGRES_USER" envDefault:"ozon"`
 	Password       string        `env:"POSTGRES_PASSWORD"`
 	Name           string        `env:"POSTGRES_DB" envDefault:"ozon"`
@@ -75,6 +75,7 @@ type GraphQLConfig struct {
 type SubscriptionConfig struct {
 	BufferSize    int           `env:"SUBSCRIPTION_BUFFER" envDefault:"64"`
 	WebSocketPing time.Duration `env:"WS_PING_INTERVAL" envDefault:"20s"`
+	InitTimeout   time.Duration `env:"WS_INIT_TIMEOUT" envDefault:"5s"`
 }
 
 type MigrationConfig struct {
@@ -109,7 +110,7 @@ func (cfg Config) ValidateServer() error {
 	if cfg.GraphQL.MaxPageSize < 1 || cfg.GraphQL.QueryComplexity < 1 {
 		return fmt.Errorf("GraphQL page and complexity limits must be positive")
 	}
-	if cfg.Subscription.BufferSize < 1 || cfg.Subscription.WebSocketPing <= 0 {
+	if cfg.Subscription.BufferSize < 1 || cfg.Subscription.WebSocketPing <= 0 || cfg.Subscription.InitTimeout <= 0 {
 		return fmt.Errorf("subscription buffer and ping interval must be positive")
 	}
 	return nil

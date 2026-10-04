@@ -66,6 +66,7 @@ func TestConfigurationValidation(t *testing.T) {
 		{"complexity limit", func(c *Config) { c.GraphQL.QueryComplexity = 0 }},
 		{"subscription buffer", func(c *Config) { c.Subscription.BufferSize = 0 }},
 		{"subscription ping", func(c *Config) { c.Subscription.WebSocketPing = 0 }},
+		{"subscription initialization", func(c *Config) { c.Subscription.InitTimeout = 0 }},
 		{"JWT secret too short", func(c *Config) { c.Auth.JWTSecret = "short" }},
 		{"JWT issuer empty", func(c *Config) { c.Auth.JWTIssuer = " " }},
 		{"JWT TTL too short", func(c *Config) { c.Auth.TokenTTL = time.Millisecond }},

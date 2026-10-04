@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -183,6 +184,168 @@ func TestGraphQLLimitsAndPanicRecovery(t *testing.T) {
 		require.NotEmpty(t, result.Errors)
 		require.Contains(t, result.Errors[0].Message, "unknownField")
 	})
+}
+
+func TestHTTPBodyTooLarge(t *testing.T) {
+	t.Parallel()
+	for _, chunked := range []bool{false, true} {
+		t.Run(fmt.Sprintf("chunked=%v", chunked), func(t *testing.T) {
+			t.Parallel()
+			posts := mocks.NewPostUseCases(t)
+			h := testHandler(t, &graph.Resolver{Posts: posts, PageLimit: 100}, 1024, 1000)
+			body := `{"query":"{posts{items{id}}}","variables":{"padding":"` + strings.Repeat("x", 2048) + `"}}`
+			req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			if chunked {
+				req.ContentLength = -1
+				req.TransferEncoding = []string{"chunked"}
+			}
+			recorder := httptest.NewRecorder()
+			h.ServeHTTP(recorder, req)
+			require.Equal(t, http.StatusRequestEntityTooLarge, recorder.Code)
+			require.Contains(t, recorder.Body.String(), "INVALID_INPUT")
+			require.NotContains(t, recorder.Body.String(), "INTERNAL_ERROR")
+			posts.AssertNotCalled(t, "Posts", mock.Anything, mock.Anything)
+		})
+	}
+}
+
+func TestHTTPBodyReadError(t *testing.T) {
+	t.Parallel()
+	h := testHandler(t, &graph.Resolver{}, 1024, 1000)
+	req := httptest.NewRequest(http.MethodPost, "/graphql", iotest.ErrReader(errors.New("private read error")))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	h.ServeHTTP(recorder, req)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "INVALID_INPUT")
+	require.NotContains(t, recorder.Body.String(), "private read error")
+}
+
+func TestHTTPBodyExactlyAtLimit(t *testing.T) {
+	t.Parallel()
+	posts := mocks.NewPostUseCases(t)
+	posts.On("Posts", mock.Anything, mock.Anything).Return(domain.Page[domain.Post]{}, nil).Once()
+	body := `{"query":"{posts{items{id}}}"}`
+	h := testHandler(t, &graph.Resolver{Posts: posts, PageLimit: 100}, int64(len(body)), 1000)
+	req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	h.ServeHTTP(recorder, req)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.NotContains(t, recorder.Body.String(), "errors")
+}
+
+func TestWebSocketMessageLimit(t *testing.T) {
+	t.Parallel()
+	for _, protocol := range []string{"graphql-ws", "graphql-transport-ws"} {
+		for _, stage := range []string{"initialization", "operation"} {
+			for _, authenticated := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/auth=%v", protocol, stage, authenticated), func(t *testing.T) {
+					t.Parallel()
+					posts := mocks.NewPostUseCases(t)
+					server := httptest.NewServer(testHandler(t, &graph.Resolver{Posts: posts, PageLimit: 100}, 1024, 1000))
+					defer server.Close()
+					dialer := websocket.Dialer{Subprotocols: []string{protocol}, WriteBufferSize: 128}
+					headers := http.Header{}
+					if authenticated {
+						headers.Set("Authorization", "Bearer author")
+					}
+					conn, response, err := dialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/graphql", headers)
+					if response != nil {
+						defer response.Body.Close()
+					}
+					require.NoError(t, err)
+					defer conn.Close()
+					require.NoError(t, conn.SetReadDeadline(time.Now().Add(3*time.Second)))
+					if stage == "operation" {
+						require.NoError(t, conn.WriteJSON(map[string]string{"type": "connection_init"}))
+						var ack map[string]any
+						require.NoError(t, conn.ReadJSON(&ack))
+						require.Equal(t, "connection_ack", ack["type"])
+					}
+					kind := "connection_init"
+					payload := map[string]any{"padding": strings.Repeat("x", 2048)}
+					if stage == "operation" {
+						kind = "start"
+						if protocol == "graphql-transport-ws" {
+							kind = "subscribe"
+						}
+						payload = map[string]any{"query": "{posts{items{id}}}", "variables": payload}
+					}
+					_ = conn.WriteJSON(map[string]any{"id": "1", "type": kind, "payload": payload})
+					for {
+						_, _, err = conn.ReadMessage()
+						if err != nil {
+							break
+						}
+					}
+					require.True(t, websocket.IsCloseError(err, websocket.CloseMessageTooBig), "unexpected close: %v", err)
+					posts.AssertNotCalled(t, "Posts", mock.Anything, mock.Anything)
+				})
+			}
+		}
+	}
+}
+
+func TestWebSocketInitializationTimeout(t *testing.T) {
+	t.Parallel()
+	for _, protocol := range []string{"graphql-ws", "graphql-transport-ws"} {
+		t.Run(protocol, func(t *testing.T) {
+			t.Parallel()
+			log := slog.New(slog.NewTextHandler(io.Discard, nil))
+			h := graph.NewHandler(&graph.Resolver{}, log, graph.HTTPOptions{BodyLimit: 1024, ComplexityLimit: 1000, WebSocketInitTimeout: 50 * time.Millisecond})
+			server := httptest.NewServer(h)
+			defer server.Close()
+			dialer := websocket.Dialer{Subprotocols: []string{protocol}}
+			conn, response, err := dialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+			if response != nil {
+				defer response.Body.Close()
+			}
+			require.NoError(t, err)
+			defer conn.Close()
+			require.NoError(t, conn.SetReadDeadline(time.Now().Add(time.Second)))
+			_, _, err = conn.ReadMessage()
+			require.True(t, websocket.IsCloseError(err, websocket.CloseProtocolError), "unexpected close: %v", err)
+		})
+	}
+}
+
+func TestWebSocketLargeAnonymousRequest(t *testing.T) {
+	t.Parallel()
+	for _, protocol := range []string{"graphql-ws", "graphql-transport-ws"} {
+		t.Run(protocol, func(t *testing.T) {
+			t.Parallel()
+			posts := mocks.NewPostUseCases(t)
+			server := httptest.NewServer(testHandler(t, &graph.Resolver{Posts: posts, PageLimit: 100}, 1<<20, 1000))
+			defer server.Close()
+			dialer := websocket.Dialer{Subprotocols: []string{protocol}}
+			conn, response, err := dialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/graphql", nil)
+			if response != nil {
+				defer response.Body.Close()
+			}
+			require.NoError(t, err)
+			defer conn.Close()
+			require.NoError(t, conn.SetReadDeadline(time.Now().Add(3*time.Second)))
+			require.NoError(t, conn.WriteJSON(map[string]string{"type": "connection_init"}))
+			var ack map[string]any
+			require.NoError(t, conn.ReadJSON(&ack))
+			require.Equal(t, "connection_ack", ack["type"])
+			kind := "start"
+			if protocol == "graphql-transport-ws" {
+				kind = "subscribe"
+			}
+			_ = conn.WriteJSON(map[string]any{"id": "1", "type": kind, "payload": map[string]any{"query": strings.Repeat(" ", 2<<20) + "{posts{items{id}}}"}})
+			for {
+				_, _, err = conn.ReadMessage()
+				if err != nil {
+					break
+				}
+			}
+			require.True(t, websocket.IsCloseError(err, websocket.CloseMessageTooBig), "unexpected close: %v", err)
+			posts.AssertNotCalled(t, "Posts", mock.Anything, mock.Anything)
+		})
+	}
 }
 
 func TestWeightedComplexityRejectsAliasesBeforeStorage(t *testing.T) {

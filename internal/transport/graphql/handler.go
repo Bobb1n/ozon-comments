@@ -1,8 +1,11 @@
 package graphql
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -19,11 +22,12 @@ import (
 )
 
 type HTTPOptions struct {
-	WebSocketPing   time.Duration
-	BodyLimit       int64
-	ComplexityLimit int
-	Verifier        middleware.TokenVerifier
-	Metrics         GraphQLMetrics
+	WebSocketPing        time.Duration
+	WebSocketInitTimeout time.Duration
+	BodyLimit            int64
+	ComplexityLimit      int
+	Verifier             middleware.TokenVerifier
+	Metrics              GraphQLMetrics
 }
 
 type GraphQLMetrics interface{ ObserveGraphQLError(string) }
@@ -36,13 +40,18 @@ func NewHandler(resolver *Resolver, logger *slog.Logger, options HTTPOptions) ht
 	configureErrors(server, logger, options.Metrics)
 	authenticated := middleware.Authentication(server, options.Verifier)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, options.BodyLimit)
+		if r.Header.Get("Upgrade") == "" && !readRequestBody(w, r, options.BodyLimit) {
+			return
+		}
 		authenticated.ServeHTTP(w, r)
 	})
 }
 
 func configureTransports(server *handler.Server, options HTTPOptions) {
 	server.AddTransport(transport.Websocket{
+		Implementation:        websocketImplementation{},
+		PayloadReadLimit:      &options.BodyLimit,
+		InitTimeout:           options.WebSocketInitTimeout,
 		KeepAlivePingInterval: options.WebSocketPing,
 		InitFunc: func(ctx context.Context, payload transport.InitPayload) (context.Context, *transport.InitPayload, error) {
 			if authorization, exists := payload["Authorization"]; exists {
@@ -62,6 +71,28 @@ func configureTransports(server *handler.Server, options HTTPOptions) {
 	server.AddTransport(transport.Options{})
 	server.AddTransport(transport.GET{})
 	server.AddTransport(transport.POST{})
+}
+
+func readRequestBody(w http.ResponseWriter, r *http.Request, limit int64) bool {
+	if r.Body == nil {
+		return true
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
+	if err == nil {
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		return true
+	}
+	status, message := http.StatusBadRequest, "could not read request body"
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		status, message = http.StatusRequestEntityTooLarge, "request body too large"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(graphql.Response{Errors: gqlerror.List{
+		{Message: message, Extensions: map[string]any{"code": "INVALID_INPUT"}},
+	}})
+	return false
 }
 
 func configureErrors(server *handler.Server, logger *slog.Logger, metrics GraphQLMetrics) {

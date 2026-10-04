@@ -161,6 +161,28 @@ func TestShutdownClosesGraphQLWebSocket(t *testing.T) {
 	require.NoError(t, waitForShutdown(t, finished))
 }
 
+func TestShutdownClosesUninitializedGraphQLWebSocket(t *testing.T) {
+	for _, protocol := range []string{"graphql-ws", "graphql-transport-ws"} {
+		t.Run(protocol, func(t *testing.T) {
+			log := slog.New(slog.NewTextHandler(io.Discard, nil))
+			options := graph.HTTPOptions{BodyLimit: 1 << 20, ComplexityLimit: 1000, WebSocketInitTimeout: time.Minute}
+			_, cancel, finished, address, _ := startTestContainer(t, NewRouter(graph.NewHandler(&graph.Resolver{}, log, options), log, AuthOptions{}, MetricsOptions{}))
+			dialer := websocket.Dialer{Subprotocols: []string{protocol}}
+			conn, response, err := dialer.Dial("ws://"+address+"/graphql", nil)
+			if response != nil {
+				defer response.Body.Close()
+			}
+			require.NoError(t, err)
+			defer conn.Close()
+			require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+			cancel()
+			_, _, err = conn.ReadMessage()
+			require.True(t, websocket.IsCloseError(err, websocket.CloseNormalClosure), "unexpected close: %v", err)
+			require.NoError(t, waitForShutdown(t, finished))
+		})
+	}
+}
+
 func TestShutdownClosesUpgradedConnectionBeforeStorage(t *testing.T) {
 	ended := make(chan struct{})
 	upgrader := websocket.Upgrader{}

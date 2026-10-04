@@ -63,8 +63,9 @@ func NewContainer() (*Container, error) {
 	}
 	handler := graph.NewHandler(resolver, log, graph.HTTPOptions{
 		WebSocketPing: cfg.Subscription.WebSocketPing, BodyLimit: cfg.HTTP.RequestBodyLimit, ComplexityLimit: cfg.GraphQL.QueryComplexity,
-		Verifier: auth,
-		Metrics:  observer,
+		WebSocketInitTimeout: cfg.Subscription.InitTimeout,
+		Verifier:             auth,
+		Metrics:              observer,
 	})
 	router := httpserver.NewRouter(handler, log,
 		httpserver.AuthOptions{
